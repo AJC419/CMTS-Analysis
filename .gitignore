@@ -1,3 +1,18 @@
+# ---- Data: never commit record-level NEMSIS data ----
+# Raw downloads, converted Parquet, and per-record working files.
+data/
+**/data/
+*.sas7bdat
+*.parquet
+*.fst
+
+# Reports may be committed (no record-level data), but not the year folders
+# of working CSVs if that ever changes.
+# reports/
+
+# macOS
+.DS_Store
+
 # History files
 .Rhistory
 .Rapp.history
