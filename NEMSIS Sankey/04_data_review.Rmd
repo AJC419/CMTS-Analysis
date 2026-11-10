@@ -1,0 +1,306 @@
+---
+title: "NEMSIS data review: groupings for the Sankey stages"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Chunks start in the folder this file sits in (NEMSIS/). Every path below is
+# written from the project folder one level up, so the root is moved there.
+if (file.exists("00_config.R")) {
+  knitr::opts_knit$set(root.dir = normalizePath(".."))
+}
+```
+
+This document supports four decisions that must be made before the composite tables are built: how primary impressions are grouped, where transport times are cut into ranges, how transport type and crew capability are combined, and which destination types are shown as separate bands. No composite table is produced here. Each grouping is held as a draft in a lookup file, the effect of that draft on the filtered records is shown, and the lookup is edited until the result is acceptable. The document is then knitted again to confirm the change.
+
+The settings are loaded from `NEMSIS/00_config.R`, and the Parquet files written by the yearly run are used as they are, so no conversion is repeated.
+
+```{r config, message=FALSE}
+source("NEMSIS/00_config.R")
+source("NEMSIS/filters.R")
+
+library(arrow)
+
+lookup_dir <- "NEMSIS/lookups"
+
+variables    <- load_variables()
+level_lookup <- load_levels()
+
+impression_groups <- read_csv(file.path(lookup_dir, "impression_groups.csv"),
+                              show_col_types = FALSE)
+time_ranges       <- read_csv(file.path(lookup_dir,"time_ranges.csv"), 
+                              show_col_types = FALSE)
+value_groups      <- read_csv(file.path(lookup_dir, "value_groups.csv"),
+                              col_types = cols(.default = col_character()))
+transport_bands   <- read_csv(file.path(lookup_dir, "transport_bands.csv"), 
+                              show_col_types = FALSE)
+```
+
+```{r settings}
+tibble(
+  setting = c("Year", "Run on", "Parquet folder"),
+  value   = c(run_year, format(Sys.time(), "%Y-%m-%d %H:%M"), parquet_dir)
+) |>
+  knitr::kable()
+```
+
+The same filters used in the variable check are applied, so that every figure below refers to the records the Sankeys will be built from. The filtered records are held as an Arrow query on disk rather than loaded into memory.
+
+```{r filtered-records}
+kept   <- filtered_events(variables, level_lookup)
+n_kept <- kept |> count() |> collect() |> pull(n)
+
+n_kept
+```
+
+Two helper functions are used throughout. The first counts the values of one variable among the filtered records. The second converts a count to a percent of the filtered records, reported to three significant figures.
+
+```{r helpers}
+# Counts of each value of variable v among the filtered records. Not Values and
+# blanks are combined as missing (NA), and records with no row in the
+# variable's table are added to the missing count.
+count_values <- function(v) {
+  counts <- filtered_rows(v, kept, variables) |>
+    select(value = all_of(v)) |>
+    count(value) |>
+    collect() |>
+    mutate(value = if_else(value %in% names(not_value_codes), 
+                           NA_character_, value)) |>
+    group_by(value) |>
+    summarise(n = sum(n), .groups = "drop")
+
+  no_record <- n_kept - sum(counts$n)
+
+  if (no_record > 0) {
+    counts <- counts |>
+      add_row(value = NA_character_, n = no_record) |>
+      group_by(value) |>
+      summarise(n = sum(n), .groups = "drop")
+  }
+
+  counts
+}
+
+pct_of_kept <- function(n) signif(100 * n / n_kept, 3)
+```
+
+**Decision 1: impression groups.** Primary impression is recorded as an ICD-10-CM code, so each code is assigned to a group by the prefixes listed in `impression_groups.csv`. When more than one prefix matches a code, the longest prefix is used. A code that matches no prefix is assigned to "Medical (other)", and a missing impression is assigned to "Not recorded".
+
+```{r impression-assign}
+# Longest prefixes are tried first, so a specific rule beats a general one.
+prefix_rules <- impression_groups |> arrange(desc(str_length(prefix)))
+
+assign_group <- function(code) {
+  code  <- str_to_upper(code)
+  group <- rep(NA_character_, length(code))
+
+  for (i in seq_len(nrow(prefix_rules))) {
+    hit <- !is.na(code) & is.na(group) & str_starts(
+                                        code,fixed(prefix_rules$prefix[i])
+                                                    )
+    group[hit] <- prefix_rules$group[i]
+  }
+
+  case_when(
+    is.na(code)  ~ "Not recorded",
+    is.na(group) ~ "Medical (other)",
+    TRUE         ~ group
+  )
+}
+
+impression_counts <- count_values("primary_impression") |>
+  mutate(group = assign_group(value), pct = pct_of_kept(n)) |>
+  arrange(desc(n))
+```
+
+The share of the filtered records falling in each group under the current draft is shown first.
+
+```{r impression-groups}
+impression_counts |>
+  group_by(group) |>
+  summarise(codes = n(), n = sum(n), .groups = "drop") |>
+  mutate(pct = pct_of_kept(n)) |>
+  arrange(desc(n)) |>
+  knitr::kable(format.args = list(big.mark = ","))
+```
+
+The 15 most frequent codes within each group are listed next, so that a code placed in the wrong group can be identified. The "Medical (other)" block deserves the closest reading, because any common code that belongs elsewhere will appear there. Placement is a matter of judgment for some codes; under the current lookup, chest pain (R07) is assigned to Cardiac, drug poisoning (T36 to T50) falls in "Medical (other)", and substance use (F10 to F19) is assigned to Psych.
+
+```{r impression-top-codes}
+impression_counts |>
+  filter(!is.na(value)) |>
+  group_by(group) |>
+  slice_max(n, n = 15, with_ties = FALSE) |>
+  ungroup() |>
+  select(group, code = value, n, pct) |>
+  knitr::kable(format.args = list(big.mark = ","))
+```
+
+**Decision 2: transport-time ranges.** Transport time is stored as text and is converted to minutes here. Its distribution among the filtered records is summarised first, so that the chosen ranges can be judged against the data. Negative times are counted separately because they cannot be real and are treated as not recorded.
+
+```{r time-counts}
+time_counts <- count_values("transport_time_min") |>
+  mutate(minutes = as.numeric(value))
+
+valid_times <- time_counts |>
+  filter(!is.na(minutes), minutes >= 0) |>
+  arrange(minutes) |>
+  mutate(cum_pct = 100 * cumsum(n) / sum(n))
+
+# The smallest time at or below which p percent of valid records fall.
+percentile <- function(p) min(valid_times$minutes[valid_times$cum_pct >= p])
+
+# Counts and minutes are formatted one value at a time so each keeps its own
+# number of decimals.
+show_number <- function(x) format(
+  x, big.mark = ",", scientific = FALSE, trim = TRUE
+  )
+
+tibble(
+  measure = c("Records with a usable time", "Missing", "Negative",
+              "Minimum (min)", "25th percentile (min)", "Median (min)",
+              "75th percentile (min)", "90th percentile (min)",
+              "99th percentile (min)", "Maximum (min)"),
+  value = map_chr(
+    c(
+      sum(valid_times$n),
+      sum(time_counts$n[is.na(time_counts$minutes)]),
+      sum(time_counts$n[!is.na(time_counts$minutes) & time_counts$minutes < 0]),
+      round(c(min(valid_times$minutes), percentile(25), percentile(50),
+              percentile(75), percentile(90), percentile(99),
+              max(valid_times$minutes)), 1)
+    ),
+    show_number
+  )
+) |>
+  knitr::kable()
+```
+
+The shape of the distribution up to 120 minutes is shown in 5-minute bins. The dashed lines mark the boundaries between the ranges held in `time_ranges.csv`, so that the position of each cut relative to the bulk of the records can be seen.
+
+```{r time-histogram, fig.height=3.5}
+valid_times |>
+  filter(minutes < 120) |>
+  mutate(bin = floor(minutes / 5) * 5) |>
+  count(bin, wt = n, name = "records") |>
+  ggplot(aes(x = bin + 2.5, y = records)) +   # bar centred on its 5-minute bin
+  geom_col(width = 5) +
+  geom_vline(xintercept = time_ranges$lower_min[-1], linetype = "dashed") +
+  labs(x = "Transport time (minutes, 5-minute bins)", y = "Records")
+```
+
+The ranges were set at even 15-minute steps up to one hour (under 15, 15 to under 30, 30 to under 45, and 45 to under 60 minutes), with all transports of 60 minutes or more combined. Even steps were chosen so that the bands are easy to read and remain comparable from year to year, and the longest transports are combined so that the long tail of the distribution is not split into many thin bands. The percentiles and histogram above show how the records for this year fall against those cuts. The share of the filtered records falling in each range is shown below. Each range is defined by its lower bound only and runs up to the next range's lower bound, which is excluded, so the ranges cannot overlap or leave a gap. The rows of the file are required to be listed in increasing order.
+
+```{r time-ranges}
+time_counts |>
+  mutate(
+    range = cut(minutes,
+                breaks = c(time_ranges$lower_min, Inf),
+                labels = time_ranges$label,
+                right  = FALSE),
+    range = if_else(is.na(range), "Not recorded", as.character(range)),
+    range = factor(range, levels = c(time_ranges$label, "Not recorded"))
+  ) |>
+  count(range, wt = n) |>
+  mutate(pct = pct_of_kept(n)) |>
+  knitr::kable(format.args = list(big.mark = ","))
+```
+
+**Decision 3: transport type and capability.** The transport method and the unit's level of care are counted together, because the stage shown in the Sankey is their combination. The level of care is first collapsed to BLS, ALS, or critical care by `value_groups.csv`. Each combination of transport type and capability is then assigned to the band listed in `transport_bands.csv`. Under the current lookup, ground transports are shown as BLS, ALS, and critical care, while rotor transports are shown as two bands: BLS and ALS combined, and critical care.
+
+```{r type-capability}
+# Replaces each code with its group, or with its own label when no group is set.
+group_label <- function(code, v) {
+  groups <- value_groups |> filter(standard_name == v)
+  labels <- level_lookup |> filter(standard_name == v)
+
+  case_when(
+    is.na(code) | code %in% names(not_value_codes) ~ "Not recorded",
+    code %in% groups$code ~ groups$group[match(code, groups$code)],
+    code %in% labels$code ~ labels$label[match(code, labels$code)],
+    TRUE                  ~ code
+  )
+}
+
+type_capability <- kept |>
+  count(transport_method, unit_level_of_care) |>
+  collect() |>
+  mutate(
+    transport_type = group_label(transport_method, "transport_method"),
+    capability     = group_label(unit_level_of_care, "unit_level_of_care")
+  )
+
+# A combination with no row in transport_bands.csv is shown under its own name.
+type_capability <- type_capability |>
+  left_join(transport_bands, by = c("transport_type", "capability")) |>
+  mutate(band = if_else(is.na(band), paste(transport_type, capability), band))
+
+type_capability |>
+  count(band, wt = n) |>
+  mutate(pct = pct_of_kept(n)) |>
+  arrange(desc(n)) |>
+  knitr::kable(format.args = list(big.mark = ","))
+```
+
+**Urbanicity.** No grouping decision is needed for urbanicity, because it already holds only four values. Its split among the filtered records is shown so that the first stage of the urbanicity Sankey can be judged before it is built, and so that a thinly populated level can be seen in advance.
+
+```{r urbanicity}
+urbanicity_counts <- count_values("urbanicity") |>
+  mutate(
+    urbanicity = if_else(is.na(value), "Not recorded", value),
+    pct        = pct_of_kept(n)
+  ) |>
+  arrange(desc(n))
+
+knitr::kable(select(urbanicity_counts, urbanicity, n, pct),
+             format.args = list(big.mark = ","))
+```
+
+**Initial acuity.** No grouping decision is needed for initial acuity either. Its split among the filtered records is shown because missing acuity is drawn in the Sankey as its own "Not recorded" level, so the size of that level, and of each recorded level, should be known before the diagram is built.
+
+```{r acuity}
+acuity_counts <- count_values("initial_acuity") |>
+  mutate(
+    initial_acuity = if_else(is.na(value), "Not recorded",
+                             level_lookup$label[match(
+                               value, level_lookup$code
+                               )]),
+    pct            = pct_of_kept(n)
+  ) |>
+  arrange(desc(n))
+
+knitr::kable(select(acuity_counts, initial_acuity, n, pct),
+             format.args = list(big.mark = ","))
+```
+
+The tables above are saved as CSV files in the year's report folder, so that the basis for each decision is kept with the year's other reports.
+
+```{r save}
+write_csv(impression_counts,
+          file.path(
+            report_dir, paste0("review_impression_codes_", run_year, ".csv")))
+
+write_csv(select(valid_times, minutes, n, cum_pct),
+          file.path(
+            report_dir, paste0("review_transport_times_", run_year, ".csv")))
+
+write_csv(type_capability,
+          file.path(
+            report_dir, paste0("review_type_capability_", run_year, ".csv")))
+
+write_csv(urbanicity_counts,
+          file.path(
+            report_dir, paste0("review_urbanicity_", run_year, ".csv")))
+
+write_csv(acuity_counts,
+          file.path(
+            report_dir, paste0("review_acuity_", run_year, ".csv")))
+```
+
+The R and package versions used for this run are recorded below.
+
+```{r session-info}
+sessionInfo()
+```

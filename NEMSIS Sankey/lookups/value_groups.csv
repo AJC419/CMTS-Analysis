@@ -1,0 +1,27 @@
+standard_name,code,label,group
+unit_level_of_care,2215001,BLS-First Responder/EMR,BLS
+unit_level_of_care,2215003,BLS-Basic/EMT,BLS
+unit_level_of_care,2215005,BLS-AEMT,BLS
+unit_level_of_care,2215007,BLS-Intermediate,BLS
+unit_level_of_care,2215023,BLS-Community Paramedicine,BLS
+unit_level_of_care,2215009,ALS-AEMT,ALS
+unit_level_of_care,2215011,ALS-Intermediate,ALS
+unit_level_of_care,2215013,ALS-Paramedic,ALS
+unit_level_of_care,2215015,ALS-Community Paramedicine,ALS
+unit_level_of_care,2215017,ALS-Nurse,ALS
+unit_level_of_care,2215019,ALS-Physician,ALS
+unit_level_of_care,2215021,Specialty Critical Care,Critical care
+transport_method,4216005,Ground-Ambulance,Ground
+transport_method,4216003,Air Medical-Rotor Craft,Rotor
+destination_type,4221003,Hospital-Emergency Department,Hospital ED
+destination_type,4221023,Freestanding Emergency Department,Freestanding ED
+destination_type,4221005,Hospital-Non-Emergency Department Bed,Hospital non-ED
+destination_type,4221015,Other EMS Responder (air),Handoff to air
+destination_type,4221017,Other EMS Responder (ground),Handoff to ground
+destination_type,4221011,Nursing Home/Assisted Living Facility,Other
+destination_type,4221001,Home,Other
+destination_type,4221007,Clinic,Other
+destination_type,4221021,Urgent Care,Other
+destination_type,4221009,Morgue/Mortuary,Other
+destination_type,4221019,Police/Jail,Other
+destination_type,4221013,Other,Other

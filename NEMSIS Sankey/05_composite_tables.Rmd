@@ -1,0 +1,213 @@
+---
+title: "NEMSIS step 5: composite path table for the Sankeys"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Chunks start in the folder this file sits in (NEMSIS/). Every path below is
+# written from the project folder one level up, so the root is moved there.
+if (file.exists("00_config.R")) {
+  knitr::opts_knit$set(root.dir = normalizePath(".."))
+}
+```
+
+This document builds the composite path table from which the year's Sankeys are drawn. The table holds one row per path, meaning one combination of urbanicity, condition (impression group), severity (initial acuity), care level (transport band), and transport-time range, with the number of records that followed it. These are the five variables of the Sankey, held together in one table so that any of them can be switched on or off when the diagram is viewed. No record-level data is written to the table.
+
+```{r config, message=FALSE}
+source("NEMSIS/00_config.R")
+source("NEMSIS/filters.R")
+source("NEMSIS/groupings.R")
+
+library(arrow)
+
+lookup_dir <- "NEMSIS/lookups"
+
+variables    <- load_variables()
+level_lookup <- load_levels()
+groupings    <- load_groupings(lookup_dir)
+```
+
+Three settings specific to this step are set here. Paths with fewer records than the small-cell minimum are removed before the table is written, so that no count below 10 appears in the published table. The composite table is written to its own folder, separate from the reports. The working files described below hold one row per record, so they are kept inside the data folder and are deleted at the end of the run.
+
+```{r step-settings}
+small_cell_min <- 10    # paths with fewer records than this are left out of the table
+composite_dir  <- file.path(dirname(dirname(report_dir)), "composite", run_year)
+working_dir    <- file.path(parquet_dir, "working")
+
+dir.create(composite_dir, recursive = TRUE, showWarnings = FALSE)
+unlink(working_dir, recursive = TRUE)
+dir.create(working_dir, recursive = TRUE)
+```
+
+```{r settings}
+tibble(
+  setting = c("Year", "Run on", "Parquet folder", "Composite folder", "Small-cell minimum"),
+  value   = c(run_year, format(Sys.time(), "%Y-%m-%d %H:%M"), parquet_dir,
+              composite_dir, small_cell_min)
+) |>
+  knitr::kable()
+```
+
+The same filters used in the variable check and the data review are applied, so that the table is built from the same records.
+
+```{r filtered-records}
+kept   <- filtered_events(variables, level_lookup)
+n_kept <- kept |> count() |> collect() |> pull(n)
+
+# The table that holds a variable, taken from the variable lookup.
+table_of <- function(v) variables$source_table[variables$standard_name == v]
+
+n_kept
+```
+
+The variables are held in three tables, which have to be matched on the record ID. Matching all three at once would hold too much in memory, so the work is done in three passes, each of which writes a small working file to disk before the next begins.
+
+**Pass 1: events matched to urbanicity and transport time.** The table holding urbanicity and transport time is read through once and matched to the filtered events. Transport time is rounded down to the whole minute, which does not change the range a time falls in, provided the cut points in `time_ranges.csv` are whole minutes.
+
+```{r pass-1}
+if (table_of("urbanicity") != table_of("transport_time_min")) {
+  stop("urbanicity and transport_time_min are expected in the same table.")
+}
+
+events_small <- kept |>
+  select(all_of(c(key_column, "transport_method", "unit_level_of_care", "initial_acuity")))
+
+open_dataset(parquet_path(table_of("urbanicity"))) |>
+  select(all_of(c(key_column, "urbanicity", "transport_time_min"))) |>
+  mutate(minute = floor(as.numeric(transport_time_min))) |>
+  select(-transport_time_min) |>
+  inner_join(events_small, by = key_column) |>
+  write_dataset(file.path(working_dir, "events_with_times"))
+
+events_with_times <- open_dataset(file.path(working_dir, "events_with_times"))
+n_matched         <- nrow(events_with_times)
+
+if (n_matched > n_kept) {
+  stop(table_of("urbanicity"), " holds more than one row per record; the counts would be inflated.")
+}
+
+# Filtered records with no row in that table cannot be placed on a path.
+n_without_times_row <- n_kept - n_matched
+n_without_times_row
+```
+
+**Pass 2: impressions of the filtered records.** The impression table is read through once, and only the rows belonging to the filtered records are kept.
+
+```{r pass-2}
+open_dataset(parquet_path(table_of("primary_impression"))) |>
+  select(all_of(c(key_column, "primary_impression"))) |>
+  semi_join(select(kept, all_of(key_column)), by = key_column) |>
+  write_dataset(file.path(working_dir, "impressions"))
+
+impressions <- open_dataset(file.path(working_dir, "impressions"))
+
+if (nrow(impressions) > n_kept) {
+  stop(table_of("primary_impression"), " holds more than one row per record; the counts would be inflated.")
+}
+```
+
+**Pass 3: counting the paths.** Two small lookups are built in memory first: one giving the impression group of every ICD-10 code present, and one giving the time range of every whole minute present. The two working files are then matched, each record is given its impression group and time range from those lookups, and the paths are counted. Only the counts are brought into memory. A record with no impression row is kept and counted as having no recorded impression.
+
+```{r pass-3}
+code_groups <- impressions |>
+  distinct(primary_impression) |>
+  collect() |>
+  mutate(impression_group = impression_group(primary_impression, groupings$impression_groups))
+
+minute_ranges <- events_with_times |>
+  distinct(minute) |>
+  collect() |>
+  mutate(time_range = time_band(minute, groupings$time_ranges))
+
+path_counts <- events_with_times |>
+  left_join(impressions, by = key_column) |>
+  left_join(arrow_table(code_groups), by = "primary_impression") |>
+  left_join(arrow_table(minute_ranges), by = "minute") |>
+  count(urbanicity, impression_group, time_range, transport_method,
+        unit_level_of_care, initial_acuity) |>
+  collect()
+```
+
+Each remaining raw value is then replaced by the band it is shown as, using the grouping lookups, and the paths are counted again at the level of bands. A missing value in any variable is kept as its own "Not recorded" level, so that no record is dropped at this stage; which records are left out of a diagram is decided when the diagram is drawn.
+
+```{r band-paths}
+all_paths <- path_counts |>
+  mutate(
+    urbanicity       = if_else(is_missing_value(urbanicity), "Not recorded", urbanicity),
+    impression_group = coalesce(impression_group, "Not recorded"),
+    acuity           = value_band(initial_acuity, "initial_acuity",
+                                  groupings$value_groups, level_lookup),
+    transport_band   = transport_band(
+      value_band(transport_method, "transport_method", groupings$value_groups, level_lookup),
+      value_band(unit_level_of_care, "unit_level_of_care", groupings$value_groups, level_lookup),
+      groupings$transport_bands
+    ),
+    time_range       = coalesce(time_range, "Not recorded")
+  ) |>
+  count(urbanicity, impression_group, acuity, transport_band, time_range, wt = n)
+
+# Paths below the small-cell minimum are removed, and what was removed is kept
+# for the summary at the end.
+small_cells <- all_paths |> filter(n < small_cell_min)
+
+sankey_paths <- all_paths |>
+  filter(n >= small_cell_min) |>
+  mutate(year = run_year) |>
+  relocate(year) |>
+  arrange(desc(n))
+```
+
+**Recording what is missing.** The number of records with no recorded value is counted for each variable in the table, as a percent of the filtered records, reported to three significant figures. Records with no row in the table holding urbanicity and transport time are counted as missing both.
+
+```{r missingness}
+stage_columns <- c("urbanicity", "impression_group", "acuity", "transport_band", "time_range")
+
+missingness <- map(stage_columns, function(column) {
+  no_times_row <- if (column %in% c("urbanicity", "time_range")) n_without_times_row else 0
+  tibble(
+    year      = run_year,
+    variable  = column,
+    n_missing = sum(all_paths$n[all_paths[[column]] == "Not recorded"]) + no_times_row
+  )
+}) |>
+  bind_rows() |>
+  mutate(pct_missing = signif(100 * n_missing / n_kept, 3))
+
+knitr::kable(select(missingness, -year), format.args = list(big.mark = ","))
+```
+
+**Saving the table.** The composite path table is written to the composite folder; this is the file that is vetted and then copied to the public repository. The missingness table is written to the year's report folder. The working files are deleted, because they hold one row per record.
+
+```{r save}
+write_csv(sankey_paths,
+          file.path(composite_dir, paste0("sankey_paths_", run_year, ".csv")))
+write_csv(missingness,
+          file.path(report_dir, paste0("sankey_missingness_", run_year, ".csv")))
+
+unlink(working_dir, recursive = TRUE)
+```
+
+The size of the table, what the small-cell minimum removed, and the 15 largest paths are shown below as a first check that the table looks as expected. Rare combinations, such as wilderness records with a stroke impression carried by rotor, can hold very few records, and these are the paths the minimum removes.
+
+```{r preview-size}
+tibble(
+  measure = c("Filtered records", "Records in the table", "Paths (rows) in the table",
+              "Smallest path in the table (records)",
+              "Paths removed as small cells", "Records in the removed paths"),
+  value   = c(n_kept, sum(sankey_paths$n), nrow(sankey_paths), min(sankey_paths$n),
+              nrow(small_cells), sum(small_cells$n))
+) |>
+  knitr::kable(format.args = list(big.mark = ","))
+```
+
+```{r preview-paths}
+knitr::kable(head(select(sankey_paths, -year), 15), format.args = list(big.mark = ","))
+```
+
+The R and package versions used for this run are recorded below.
+
+```{r session-info}
+sessionInfo()
+```

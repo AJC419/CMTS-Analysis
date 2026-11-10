@@ -1,0 +1,7 @@
+transport_type,capability,band
+Ground,BLS,Ground BLS
+Ground,ALS,Ground ALS
+Ground,Critical care,Ground critical care
+Rotor,BLS,Rotor BLS/ALS
+Rotor,ALS,Rotor BLS/ALS
+Rotor,Critical care,Rotor critical care

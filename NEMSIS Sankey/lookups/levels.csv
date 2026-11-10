@@ -1,0 +1,71 @@
+standard_name,code,label,keep
+service_type,2205001,911 Response (Scene),TRUE
+service_type,2205003,Intercept,FALSE
+service_type,2205005,Interfacility Transport,FALSE
+service_type,2205007,Medical Transport,FALSE
+service_type,2205009,Mutual Aid,FALSE
+service_type,2205011,Public Assistance/Other Not Listed,FALSE
+service_type,2205013,Standby,FALSE
+transport_disposition,4212001,"Assist, Agency",FALSE
+transport_disposition,4212003,"Assist, Public",FALSE
+transport_disposition,4212005,"Assist, Unit",FALSE
+transport_disposition,4212007,Canceled (Prior to Arrival At Scene),FALSE
+transport_disposition,4212009,Canceled on Scene (No Patient Contact),FALSE
+transport_disposition,4212011,Canceled on Scene (No Patient Found),FALSE
+transport_disposition,4212013,Patient Dead at Scene-No Resuscitation Attempted (With Transport),FALSE
+transport_disposition,4212015,Patient Dead at Scene-No Resuscitation Attempted (Without Transport),FALSE
+transport_disposition,4212017,Patient Dead at Scene-Resuscitation Attempted (With Transport),FALSE
+transport_disposition,4212019,Patient Dead at Scene-Resuscitation Attempted (Without Transport),FALSE
+transport_disposition,4212021,"Patient Evaluated, No Treatment/Transport Required",FALSE
+transport_disposition,4212023,Patient Refused Evaluation/Care (With Transport),FALSE
+transport_disposition,4212025,Patient Refused Evaluation/Care (Without Transport),FALSE
+transport_disposition,4212027,"Patient Treated, Released (AMA)",FALSE
+transport_disposition,4212029,"Patient Treated, Released (per protocol)",FALSE
+transport_disposition,4212031,"Patient Treated, Transferred Care to Another EMS Unit",FALSE
+transport_disposition,4212033,"Patient Treated, Transported by this EMS Unit",TRUE
+transport_disposition,4212035,"Patient Treated, Transported by Law Enforcement",FALSE
+transport_disposition,4212037,"Patient Treated, Transported by Private Vehicle",FALSE
+transport_disposition,4212039,Standby-No Services or Support Provided,FALSE
+transport_disposition,4212041,"Standby-Public Safety, Fire, or EMS Operational Support Provided",FALSE
+transport_disposition,4212043,"Transport Non-Patient, Organs, etc.",FALSE
+destination_type,4221001,Home,
+destination_type,4221003,Hospital-Emergency Department,
+destination_type,4221005,Hospital-Non-Emergency Department Bed,
+destination_type,4221007,Clinic,
+destination_type,4221009,Morgue/Mortuary,
+destination_type,4221011,Nursing Home/Assisted Living Facility,
+destination_type,4221013,Other,
+destination_type,4221015,Other EMS Responder (air),
+destination_type,4221017,Other EMS Responder (ground),
+destination_type,4221019,Police/Jail,
+destination_type,4221021,Urgent Care,
+destination_type,4221023,Freestanding Emergency Department,
+initial_acuity,2813001,Critical (Red),
+initial_acuity,2813003,Emergent (Yellow),
+initial_acuity,2813005,Lower Acuity (Green),
+initial_acuity,2813007,Dead without Resuscitation Efforts (Black),
+transport_method,4216001,Air Medical-Fixed Wing,FALSE
+transport_method,4216003,Air Medical-Rotor Craft,TRUE
+transport_method,4216005,Ground-Ambulance,TRUE
+transport_method,4216007,Ground-ATV or Rescue Vehicle,FALSE
+transport_method,4216009,Ground-Bariatric,FALSE
+transport_method,4216011,Ground-Other Not Listed,FALSE
+transport_method,4216013,Ground-Mass Casualty Bus/Vehicle,FALSE
+transport_method,4216015,Ground-Wheelchair Van,FALSE
+transport_method,4216017,Water-Boat,FALSE
+unit_level_of_care,2215001,BLS-First Responder/EMR,
+unit_level_of_care,2215003,BLS-Basic/EMT,
+unit_level_of_care,2215005,BLS-AEMT,
+unit_level_of_care,2215007,BLS-Intermediate,
+unit_level_of_care,2215009,ALS-AEMT,
+unit_level_of_care,2215011,ALS-Intermediate,
+unit_level_of_care,2215013,ALS-Paramedic,
+unit_level_of_care,2215015,ALS-Community Paramedicine,
+unit_level_of_care,2215017,ALS-Nurse,
+unit_level_of_care,2215019,ALS-Physician,
+unit_level_of_care,2215021,Specialty Critical Care,
+unit_level_of_care,2215023,BLS-Community Paramedicine,
+urbanicity,Urban,Urban,
+urbanicity,Suburban,Suburban,
+urbanicity,Rural,Rural,
+urbanicity,Wilderness,Wilderness,

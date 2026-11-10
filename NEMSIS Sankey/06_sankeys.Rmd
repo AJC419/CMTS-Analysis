@@ -1,0 +1,161 @@
+---
+title: "NEMSIS step 6: interactive Sankey from the composite path table"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Chunks start in the folder this file sits in (NEMSIS/). Every path below is
+# written from the project folder one level up, so the root is moved there.
+if (file.exists("00_config.R")) {
+  knitr::opts_knit$set(root.dir = normalizePath(".."))
+}
+```
+
+```{css, echo=FALSE}
+/* Lets the report use nearly the full width of the window, so the Sankey can stretch out. */
+.main-container { max-width: 96vw; }
+```
+
+This document draws the year's Sankey from the composite path table written in step 5, so that the table can be vetted before it is copied to the public repository. Only the composite table is read; the Parquet files and the raw data are not opened. The Sankey is drawn with `networkD3::sankeyNetwork()`, and the page carries the path table so that the diagram can be redrawn in the browser when a variable or level is switched on or off.
+
+```{r config, message=FALSE}
+source("NEMSIS/00_config.R")
+source("NEMSIS/groupings.R")
+source("NEMSIS/sankey_builder.R")
+
+lookup_dir    <- "NEMSIS/lookups"
+composite_dir <- file.path(dirname(dirname(report_dir)), "composite", run_year)
+
+level_lookup <- load_levels()
+groupings    <- load_groupings(lookup_dir)
+```
+
+Two cutoffs decide which flows are drawn. The first, `min_link_pct`, is a free choice: a path that runs through a flow smaller than that percent of the records shown is not drawn, which keeps hairline flows from cluttering the diagram, and it can be raised, lowered, or set to 0. The second, `min_flow_n`, is a floor that applies whatever the first is set to: no flow of fewer than that many records is ever drawn, so that no small count is displayed. Both are applied again each time the diagram is redrawn.
+
+```{r draw-settings}
+min_link_pct  <- 0.01    # custom cutoff, as a percent of the records shown; 0 turns it off
+min_flow_n    <- 10      # floor: flows of fewer records than this are never drawn
+sankey_height <- "82vh"  # share of the window height; the width always fills the page
+
+if (!exists("note_threshold_pct")) note_threshold_pct <- 10   # used when not set in 00_config.R
+```
+
+The composite path table is read, and the number of records it holds is taken as the base for the percents in the note.
+
+```{r read-table}
+sankey_paths <- read_csv(file.path(composite_dir, paste0("sankey_paths_", run_year, ".csv")),
+                         show_col_types = FALSE)
+
+n_table <- sum(sankey_paths$n)
+
+# Percent of records with no recorded value in a variable, to three significant figures.
+missing_pct <- function(column) {
+  signif(100 * sum(sankey_paths$n[sankey_paths[[column]] == "Not recorded"]) / n_table, 3)
+}
+
+n_table
+```
+
+**The variables.** The five variables are listed in the left-to-right order in which they are drawn. For each one, the levels are given in top-to-bottom order, taken from the lookups so that they sit in the same order every year, together with the colour each level gives to the flows when that variable is the first column showing. Severity is switched off when the page opens, because a fifth column makes the diagram busy; it can be switched on from the page. Severity is also the one variable whose missing values are shown, as a "Not recorded" level, because about a fifth of records have none. For every other variable, a record with no recorded value is left out whenever that variable is displayed.
+
+```{r variables}
+impression_levels <- c(setdiff(unique(groupings$impression_groups$group), "Medical (other)"),
+                       "Medical (other)")
+acuity_levels     <- c(level_lookup$label[level_lookup$standard_name == "initial_acuity"],
+                       "Not recorded")
+band_levels       <- unique(groupings$transport_bands$band)
+time_levels       <- groupings$time_ranges$label
+
+sankey_variables <- list(
+  list(
+    key = "urbanicity", title = "Urbanicity", on = TRUE,
+    levels  = c("Urban", "Suburban", "Rural", "Wilderness"),
+    # pale blue is kept for Urban alone; the other levels take stronger, non-pale tones
+    colours = c(Urban = "#8aa9c4", Suburban = "#2f6f8f", Rural = "#c97b4a", Wilderness = "#6b4f3a")
+  ),
+  list(
+    key = "impression_group", title = "Condition", on = TRUE,
+    levels  = impression_levels,
+    # qualitative set; the large catch-all group takes the grey
+    colours = c(Cardiac = "#e02b35", Stroke = "#a559aa", Trauma = "#f0c571", Psych = "#59a89c",
+                `Medical (other)` = "#cecece")
+  ),
+  list(
+    key = "acuity", title = "Severity", on = FALSE, keep_missing = TRUE,
+    levels  = acuity_levels,
+    # red, yellow, green and charcoal follow the acuity names; grey is "Not recorded"
+    colours = c(`Critical (Red)` = "#c0504d", `Emergent (Yellow)` = "#e3b23c",
+                `Lower Acuity (Green)` = "#4f9d69",
+                `Dead without Resuscitation Efforts (Black)` = "#3b3835",
+                `Not recorded` = "#b8b3ad")
+  ),
+  list(
+    key = "transport_band", title = "Care level", on = TRUE,
+    levels  = band_levels,
+    # blues for ground, reds for rotor, each darkening with the level of care
+    colours = c(`Ground BLS` = "#8ec1da", `Ground ALS` = "#2066a8", `Ground critical care` = "#082a54",
+                `Rotor BLS/ALS` = "#d47264", `Rotor critical care` = "#ae282c")
+  ),
+  list(
+    key = "time_range", title = "Transport time", on = TRUE,
+    levels  = time_levels,
+    # sequential teal, light to dark as the time lengthens
+    colours = colorRampPalette(c("#b5d1ae", "#80ae9a", "#568b87", "#326b77", "#1b485e"))(length(time_levels))
+  )
+) |>
+  map(function(v) {
+    v$keep_missing <- isTRUE(v$keep_missing)
+    v$missing_pct  <- missing_pct(v$key)
+    v
+  })
+```
+
+The missingness of each variable is shown below. A displayed variable, other than severity, that is missing for more than `r note_threshold_pct`% of records is named in the note beneath the diagram.
+
+```{r missingness}
+tibble(
+  variable      = map_chr(sankey_variables, "title"),
+  pct_missing   = map_dbl(sankey_variables, "missing_pct"),
+  shown_as      = if_else(map_lgl(sankey_variables, "keep_missing"),
+                          "Its own level", "Left out when displayed"),
+  named_in_note = !map_lgl(sankey_variables, "keep_missing") & pct_missing > note_threshold_pct
+) |>
+  knitr::kable()
+```
+
+**The Sankey.** Above the diagram, each variable has a line of tick boxes: one for the variable and one for each of its levels. Unticking a variable removes its column, and the flows on either side join up. Unticking a level leaves its records out, so that the diagram can be limited to, for example, rural and wilderness records or cardiac conditions only. A chooser sets which variable is the first column; that variable's colours then run through the whole diagram, so that each of its levels can be followed from left to right, while the other variables keep their usual order. Each column is titled, each node label carries the node's share of the records drawn, and the note beneath the diagram is rewritten for the current choices. Hovering over a node traces its flows upstream and downstream.
+
+```{r sankey}
+sankey_widget <- build_sankey(
+  paths              = sankey_paths,
+  stages             = sankey_variables,
+  title              = paste0("EMS patient flow (", run_year, ")"),
+  subtitle           = paste0("911 scene responses transported by ground ambulance or rotor",
+                              " | Width of a band = number of records"),
+  total_records      = n_table,
+  note_threshold_pct = note_threshold_pct,
+  min_link_pct       = min_link_pct,
+  min_link_n         = min_flow_n,
+  height             = sankey_height
+)
+
+sankey_widget
+```
+
+The Sankey is also saved as a standalone HTML file in the year's report folder, so that it can be opened full-width in a browser and shared without this report.
+
+```{r save}
+htmlwidgets::saveWidget(
+  sankey_widget,
+  file.path(normalizePath(report_dir), paste0("sankey_", run_year, ".html")),
+  selfcontained = TRUE
+)
+```
+
+The R and package versions used for this run are recorded below.
+
+```{r session-info}
+sessionInfo()
+```

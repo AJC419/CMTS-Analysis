@@ -1,0 +1,21 @@
+prefix,group,covers
+I6,Stroke,Cerebrovascular diseases (I60-I69)
+G45,Stroke,Transient ischemic attack and related syndromes
+I1,Cardiac,Hypertensive diseases (I10-I16)
+I2,Cardiac,Ischemic heart disease and pulmonary heart disease (I20-I28)
+I3,Cardiac,Other forms of heart disease (I30-I39)
+I4,Cardiac,"Other forms of heart disease, including cardiac arrest and arrhythmias (I40-I49)"
+I5,Cardiac,Heart failure and other heart disease (I50-I5A)
+R07,Cardiac,"Chest pain (R07.1-R07.9)"
+R07.0,Medical (other),"Pain in throat; excluded from the chest pain rule above"
+F,Psych,"Mental and behavioral disorders (F01-F99), including substance use (F10-F19)"
+R45,Psych,"Symptoms involving emotional state, including suicidal ideation"
+S,Trauma,Injuries by body region (S00-S99)
+T07,Trauma,Unspecified multiple injuries
+T14,Trauma,Injury of unspecified body region
+T2,Trauma,Burns and corrosions (T20-T28)
+T30,Trauma,Burn and corrosion of unspecified body region
+T31,Trauma,Burns classified by extent of body surface
+T32,Trauma,Corrosions classified by extent of body surface
+T33,Trauma,Superficial frostbite
+T34,Trauma,Frostbite with tissue necrosis
